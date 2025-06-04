@@ -1,0 +1,12 @@
+{
+  "name": "com.jomo.wfc",
+  "version": "0.0.1",
+  "displayName": "Wave Function Collapse Solver",
+  "dependencies": {
+    "com.jomo.half-edge-mesh": "0.0.1"
+  },
+  "author": {
+    "name": "Jonas Mortensen",
+    "email": "Jonasmortensen3@gmail.com"
+  }
+}
