@@ -1,0 +1,16 @@
+{
+    "name": "com.jomo.wfc",
+    "rootNamespace": "Jomo.WFC",
+    "references": [
+        "GUID:246175f50433f4d39ad4649dcf420a39"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
