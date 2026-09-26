@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "displayName": "Wave Function Collapse Solver",
   "dependencies": {
-    "com.jomo.half-edge-mesh": "0.0.1"
+    "com.jomo.half-edge-mesh": "0.1.0"
   },
   "author": {
     "name": "Jonas Mortensen",

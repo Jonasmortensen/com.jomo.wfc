@@ -120,10 +120,12 @@ namespace Jomo.WFC
         }
     
         
-        public static TileConnectionGraph FromMesh(HalfEdgeMesh.Mesh mesh)
+        // Fully qualified, since inside Jomo.WFC the name HalfEdgeMesh means the namespace Jomo.HalfEdgeMesh
+        public static TileConnectionGraph FromMesh(Jomo.HalfEdgeMesh.HalfEdgeMesh mesh)
         {
 
             Dictionary<int, Node> nodes = new Dictionary<int, Node>();
+            var faceIds = new Dictionary<Jomo.HalfEdgeMesh.Face, int>();
 
             //Create nodes
             int faceId = 0;
@@ -134,7 +136,7 @@ namespace Jomo.WFC
 
                 var node = new MeshNode();
                 node.m_ID = faceId;
-                face.id = faceId;
+                faceIds[face] = faceId;
 
                 var avgPosition = (verts[0].Position + verts[1].Position + verts[2].Position + verts[3].Position)/4;
                 node.position = avgPosition;
@@ -152,14 +154,14 @@ namespace Jomo.WFC
             //TODO: Edges might not match in oppositions. Not sure if that is a problem
             foreach (var face in mesh.Faces)
             {
-                var node = nodes[face.id] as MeshNode;
+                var node = nodes[faceIds[face]] as MeshNode;
 
                 var edge = face.Edge;
                 var neighbour = edge.Twin.IncidentFace;
 
                 if (neighbour != null)
                 {
-                    node.m_xPos = nodes[neighbour.id];
+                    node.m_xPos = nodes[faceIds[neighbour]];
 
                 }
 
@@ -168,7 +170,7 @@ namespace Jomo.WFC
 
                 if (neighbour != null)
                 {
-                    node.m_zNeg = nodes[neighbour.id];
+                    node.m_zNeg = nodes[faceIds[neighbour]];
                 }
 
                 //node.p2 = edge.Next.Origin.Position;
@@ -179,7 +181,7 @@ namespace Jomo.WFC
 
                 if (neighbour != null)
                 {
-                    node.m_xNeg = nodes[neighbour.id];
+                    node.m_xNeg = nodes[faceIds[neighbour]];
                 }
 
                 edge = edge.Next;
@@ -187,7 +189,7 @@ namespace Jomo.WFC
 
                 if (neighbour != null)
                 {
-                    node.m_zPos = nodes[neighbour.id];
+                    node.m_zPos = nodes[faceIds[neighbour]];
                 }
                 //node.p0 = edge.Origin.Position;
                 //node.p1 = edge.Next.Origin.Position;
