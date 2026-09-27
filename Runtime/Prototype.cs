@@ -87,7 +87,15 @@ namespace Jomo.WFC
         public SocketList sockets;
         public float weight; //More weight means higher chance of collapse
 
-    
+        //Free-form labels from the json, e.g. "tags": ["water", "coast"]. Empty when the json has none.
+        public List<string> tags = new List<string>();
+
+        public bool HasTag(string tag)
+        {
+            return tags.Contains(tag);
+        }
+
+
         public static Prototype MakeCopy(Prototype original)
         {
             Prototype copy = new Prototype();
@@ -100,6 +108,7 @@ namespace Jomo.WFC
             //copy.negXNeighbor = new List<int>(original.negXNeighbor);
             //copy.posZNeighbor = new List<int>(original.posZNeighbor);
             copy.weight = original.weight;
+            copy.tags = new List<string>(original.tags);
             return copy;
         }
 
@@ -125,7 +134,10 @@ namespace Jomo.WFC
                 id++;
             
                 prototype.sockets.AllocateReverseSockets();
-            
+
+                //In case JsonUtility leaves the list null when the json has no "tags"
+                if (prototype.tags == null) prototype.tags = new List<string>();
+
             }
 
             if (addRotations) prototypes = AddRotations(prototypes);
