@@ -108,6 +108,9 @@ namespace Jomo.WFC
 
             public Vector3 position;
 
+            // The face this node was built from, for reading its Data
+            public Jomo.HalfEdgeMesh.Face m_Face;
+
             public List<Vector3> GetRotatedPoints()
             {
                 Vector3[] temp = {p3, p0, p1, p2};
@@ -136,6 +139,7 @@ namespace Jomo.WFC
 
                 var node = new MeshNode();
                 node.m_ID = faceId;
+                node.m_Face = face;
                 faceIds[face] = faceId;
 
                 var avgPosition = (verts[0].Position + verts[1].Position + verts[2].Position + verts[3].Position)/4;

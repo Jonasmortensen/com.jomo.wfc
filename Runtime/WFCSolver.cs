@@ -19,6 +19,10 @@ namespace Jomo.WFC
             //The possible prototypes
             public List<int> m_PrototypeIndices;
 
+            // The graph node this superposition solves. For graphs made with TileConnectionGraph.FromMesh it is a
+            // MeshNode, whose m_Face gives access to the mesh face and its data.
+            public Node m_Node;
+
             private SuperPosition m_posX;
             private SuperPosition m_negX;
             private SuperPosition m_posZ;
@@ -188,6 +192,7 @@ namespace Jomo.WFC
             {
                 SuperPosition superPosition = new SuperPosition();
                 superPosition.m_PrototypeIndices = Enumerable.Range(0, prototypes.Length).ToList();
+                superPosition.m_Node = m_ConnectionGraph.nodes[i];
                 superPositions[m_ConnectionGraph.nodes[i].m_ID] = superPosition;
             }
 
@@ -409,7 +414,9 @@ namespace Jomo.WFC
             return result;
         }
 
-        private int PickWeightedPrototype(List<int> prototypes)
+        // Picks one of the given prototype indices at random, weighted by prototype weight. Useful in a custom
+        // collapse after narrowing down a superposition's candidates.
+        public int PickWeightedPrototype(List<int> prototypes)
         {
             //Find total weight sum
             float weightSum = 0;
