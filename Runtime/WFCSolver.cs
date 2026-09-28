@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Sockets;
+using System.Text;
 using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.Profiling;
-using Random = UnityEngine.Random;
 
 
 namespace Jomo.WFC
@@ -100,6 +100,11 @@ namespace Jomo.WFC
         //Lookup table for getting prototypes that fits with given socket in given direction
         private Dictionary<(string, NeighbourDirection), Prototype[]> m_NeighbourLookup;
 
+        // Why propagation last failed, or null if it hasn't: the position that ran out of prototypes, and the sockets a
+        // tile there would need on each side to fit what its neighbours can still be. Adding a prototype with those
+        // sockets (in any rotation, if rotations are generated) would have avoided the contradiction.
+        public string LastContradiction { get; private set; }
+
         public bool Solve(SuperPosition pos, int prototypeID)
         {
             if (pos.m_PrototypeIndices.Count == 1)
@@ -130,6 +135,8 @@ namespace Jomo.WFC
             if (validPrototypes.Count == 0)
             {
                 Debug.Log("No valid prototypes found");
+                LastContradiction = "None of the requested prototypes are still possible at node " +
+                                    (pos.m_Node != null ? pos.m_Node.m_ID.ToString() : "?") + ".\n" + DescribeContradiction(pos);
                 return false;
             }
 
@@ -179,8 +186,14 @@ namespace Jomo.WFC
             }
         }
     
-        public WFCSolver(Prototype[] prototypes, TileConnectionGraph connectionGraph, string defaultSocket = "")
+        // Every random choice the solver makes comes from here, including those a custom collapse should make, so a
+        // solve with the same seed, prototypes and graph always gives the same result
+        public System.Random RandomSource { get; }
+
+        // With a seed the solve is repeatable. Without one it is seeded differently every time.
+        public WFCSolver(Prototype[] prototypes, TileConnectionGraph connectionGraph, string defaultSocket = "", int? seed = null)
         {
+            RandomSource = seed.HasValue ? new System.Random(seed.Value) : new System.Random();
             m_ConnectionGraph = connectionGraph;
 
             SuperPosition[] superPositions = new SuperPosition[m_ConnectionGraph.nodes.Count];
@@ -296,7 +309,54 @@ namespace Jomo.WFC
         
             if(candidates.Count == 0) throw new Exception("Already collapsed");
 
-            return candidates[Random.Range(0, candidates.Count)];
+            return candidates[RandomSource.Next(candidates.Count)];
+        }
+
+        // The direction in which from sees to. On a mesh graph this isn't simply the opposite of to's direction to from.
+        private static NeighbourDirection DirectionTowards(SuperPosition from, SuperPosition to)
+        {
+            if (from.GetNeighbour(NeighbourDirection.POSITIVE_X) == to) return NeighbourDirection.POSITIVE_X;
+            if (from.GetNeighbour(NeighbourDirection.NEGATIVE_X) == to) return NeighbourDirection.NEGATIVE_X;
+            if (from.GetNeighbour(NeighbourDirection.POSITIVE_Z) == to) return NeighbourDirection.POSITIVE_Z;
+            if (from.GetNeighbour(NeighbourDirection.NEGATIVE_Z) == to) return NeighbourDirection.NEGATIVE_Z;
+            throw new Exception("Could not find other direction");
+        }
+
+        // Describes what a tile at the position would need to fit its neighbours, see LastContradiction.
+        // A prototype fits next to a neighbour when its socket towards it equals the neighbour's socket back, reversed.
+        private string DescribeContradiction(SuperPosition position)
+        {
+            var text = new StringBuilder();
+            string node = position.m_Node != null ? position.m_Node.m_ID.ToString() : "?";
+            text.Append("No prototype fits node ").Append(node).AppendLine(". A tile there would need these sockets:");
+
+            foreach (NeighbourDirection direction in Enum.GetValues(typeof(NeighbourDirection)))
+            {
+                text.Append("  ").Append(direction).Append(": ");
+
+                SuperPosition neighbour = position.GetNeighbour(direction);
+                if (neighbour == null)
+                {
+                    text.AppendLine("any (no neighbour)");
+                    continue;
+                }
+
+                NeighbourDirection back = DirectionTowards(neighbour, position);
+                var sockets = new SortedSet<string>(neighbour.m_PrototypeIndices.Select(i => m_Prototypes[i].sockets.GetSocketInDirection(back, true)));
+                text.Append(string.Join(" or ", sockets.Select(s => "\"" + s + "\"")));
+
+                if (neighbour.m_PrototypeIndices.Count == 1)
+                {
+                    Prototype p = m_Prototypes[neighbour.m_PrototypeIndices[0]];
+                    text.Append("  (neighbour is ").Append(p.mesh_name).Append(" rotated ").Append(p.rotation).AppendLine(")");
+                }
+                else
+                {
+                    text.Append("  (neighbour can still be ").Append(neighbour.m_PrototypeIndices.Count).AppendLine(" prototypes)");
+                }
+            }
+
+            return text.ToString();
         }
 
         private List<int> GetPossibleNeighbours(SuperPosition superPosition, NeighbourDirection direction)
@@ -304,28 +364,8 @@ namespace Jomo.WFC
             using (s_GetNeighboursPerfMarker.Auto())
             {
                 //Find out which socket is facing me
-                NeighbourDirection otherDirection;
                 SuperPosition neighbour = superPosition.GetNeighbour(direction);
-                if (neighbour.GetNeighbour(NeighbourDirection.POSITIVE_X) == superPosition)
-                {
-                    otherDirection = NeighbourDirection.POSITIVE_X;
-                }
-                else if (neighbour.GetNeighbour(NeighbourDirection.NEGATIVE_X) == superPosition)
-                {
-                    otherDirection = NeighbourDirection.NEGATIVE_X;
-                }
-                else if (neighbour.GetNeighbour(NeighbourDirection.POSITIVE_Z) == superPosition)
-                {
-                    otherDirection = NeighbourDirection.POSITIVE_Z;
-                }
-                else if (neighbour.GetNeighbour(NeighbourDirection.NEGATIVE_Z) == superPosition)
-                {
-                    otherDirection = NeighbourDirection.NEGATIVE_Z;
-                }
-                else
-                {
-                    throw new Exception("Could not find other direction");
-                }
+                NeighbourDirection otherDirection = DirectionTowards(neighbour, superPosition);
 
                 //List<int> neightborsUnion = new List<int>(32);
             
@@ -427,12 +467,12 @@ namespace Jomo.WFC
         
             if (weightSum == 0)
             {
-                int uniformDraw = Random.Range(0, prototypes.Count);
+                int uniformDraw = RandomSource.Next(prototypes.Count);
                 return prototypes[uniformDraw];
             }
         
             //Make draw and reset sum
-            float draw = Random.Range(0, weightSum);
+            float draw = (float)(RandomSource.NextDouble() * weightSum);
             weightSum = 0;
 
             //find index of band
@@ -601,6 +641,7 @@ namespace Jomo.WFC
                 if (neighbour.m_PrototypeIndices.Count <= 1)
                 {
                     Debug.Log("Banning in a collapsedPosition");
+                    LastContradiction = DescribeContradiction(neighbour);
                     return (false, null); //Can't ban a collapsed position
                 }
                 neighbour.m_PrototypeIndices.Remove(id);
