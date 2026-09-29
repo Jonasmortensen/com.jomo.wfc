@@ -87,7 +87,7 @@ namespace Jomo.WFC
         public SocketList sockets;
         public float weight; //More weight means higher chance of collapse
 
-        //Free-form labels from the json, e.g. "tags": ["water", "coast"]. Empty when the json has none.
+        //Free-form labels from the json, e.g. "tags": ["biomeA", "biomeB"]. Empty when the json has none.
         public List<string> tags = new List<string>();
 
         public bool HasTag(string tag)
