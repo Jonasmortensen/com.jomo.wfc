@@ -105,6 +105,12 @@ namespace Jomo.WFC
         // sockets (in any rotation, if rotations are generated) would have avoided the contradiction.
         public string LastContradiction { get; private set; }
 
+        // Set when the border sockets already rule out every prototype somewhere, so Solve fails straight away
+        private bool m_Unsolvable;
+
+        // Socket for every side without a neighbour, or null
+        private string m_DefaultSocket;
+
         public bool Solve(SuperPosition pos, int prototypeID)
         {
             if (pos.m_PrototypeIndices.Count == 1)
@@ -212,9 +218,10 @@ namespace Jomo.WFC
             m_SuperPositions = superPositions.ToList();
 
             bool constrainOuterEdge = !string.IsNullOrEmpty(defaultSocket);
+            m_DefaultSocket = constrainOuterEdge ? defaultSocket : null;
             List<SuperPosition> constrainedSuperPositions = new List<SuperPosition>();
 
-            //Connect them remove and update prototypes of outer edge
+            //Connect them, and remove prototypes that don't fit the socket required on sides without a neighbour
             for (int i = 0; i < m_ConnectionGraph.nodes.Count; i++)
             {
                 SuperPosition superPosition = m_SuperPositions[i];
@@ -223,53 +230,62 @@ namespace Jomo.WFC
 
                 bool hasConstrained = false;
 
-                if (node.m_xPos != null)
+                foreach (NeighbourDirection direction in Enum.GetValues(typeof(NeighbourDirection)))
                 {
-                    superPosition.SetNeighbour(NeighbourDirection.POSITIVE_X, m_SuperPositions[node.m_xPos.m_ID]);
-                }
-                else if (constrainOuterEdge)
-                {
-                    superPosition.m_PrototypeIndices.RemoveAll(i => prototypes[i].sockets.posX != defaultSocket);
-                    hasConstrained = true;
-                }
+                    Node neighbourNode = NeighbourNode(node, direction);
+                    if (neighbourNode != null)
+                    {
+                        superPosition.SetNeighbour(direction, m_SuperPositions[neighbourNode.m_ID]);
+                        continue;
+                    }
 
-                if (node.m_xNeg != null)
-                {
-                    superPosition.SetNeighbour(NeighbourDirection.NEGATIVE_X, m_SuperPositions[node.m_xNeg.m_ID]);
-                }
-                else if (constrainOuterEdge)
-                {
-                    superPosition.m_PrototypeIndices.RemoveAll(i => prototypes[i].sockets.negX != defaultSocket);
-                    hasConstrained = true;
-                }
+                    string required = RequiredBorderSocket(node, direction);
+                    if (required == null) continue;
 
-                if (node.m_zPos != null)
-                {
-                    superPosition.SetNeighbour(NeighbourDirection.POSITIVE_Z, m_SuperPositions[node.m_zPos.m_ID]);
-                }
-                else if (constrainOuterEdge)
-                {
-                    superPosition.m_PrototypeIndices.RemoveAll(i => prototypes[i].sockets.posZ != defaultSocket);
-                    hasConstrained = true;
-                }
-
-                if (node.m_zNeg != null)
-                {
-                    superPosition.SetNeighbour(NeighbourDirection.NEGATIVE_Z, m_SuperPositions[node.m_zNeg.m_ID]);
-                }
-                else if (constrainOuterEdge)
-                {
-                    superPosition.m_PrototypeIndices.RemoveAll(i => prototypes[i].sockets.negZ != defaultSocket);
+                    superPosition.m_PrototypeIndices.RemoveAll(p => prototypes[p].sockets.GetSocketInDirection(direction) != required);
                     hasConstrained = true;
                 }
 
                 if (hasConstrained) constrainedSuperPositions.Add(superPosition);
             }
 
+            // A position left without prototypes can't be solved, and propagating from it would go wrong
+            SuperPosition empty = m_SuperPositions.FirstOrDefault(p => p.m_PrototypeIndices.Count == 0);
+            if (empty != null)
+            {
+                m_Unsolvable = true;
+                LastContradiction = DescribeContradiction(empty);
+                return;
+            }
+
             foreach (SuperPosition constrainedPos in constrainedSuperPositions)
             {
-                Propegate(constrainedPos);
+                if (!Propegate(constrainedPos))
+                {
+                    m_Unsolvable = true;
+                    return;
+                }
             }
+        }
+
+        // The socket for a side without a neighbour: the one the graph asks for there (a mesh border), otherwise the
+        // default socket given to the constructor, otherwise null for a free side
+        private string RequiredBorderSocket(Node node, NeighbourDirection direction)
+        {
+            return node.m_BoundarySockets[(int)direction] ?? m_DefaultSocket;
+        }
+
+        private static Node NeighbourNode(Node node, NeighbourDirection direction)
+        {
+            switch (direction)
+            {
+                case NeighbourDirection.POSITIVE_X: return node.m_xPos;
+                case NeighbourDirection.NEGATIVE_X: return node.m_xNeg;
+                case NeighbourDirection.POSITIVE_Z: return node.m_zPos;
+                case NeighbourDirection.NEGATIVE_Z: return node.m_zNeg;
+            }
+
+            throw new Exception("Invalid neighbour direction");
         }
 
 //Checks if every single superposition is collapsed
@@ -337,7 +353,8 @@ namespace Jomo.WFC
                 SuperPosition neighbour = position.GetNeighbour(direction);
                 if (neighbour == null)
                 {
-                    text.AppendLine("any (no neighbour)");
+                    string border = position.m_Node != null ? RequiredBorderSocket(position.m_Node, direction) : null;
+                    text.AppendLine(border != null ? "\"" + border + "\"  (required on this border side)" : "any (no neighbour)");
                     continue;
                 }
 
@@ -705,6 +722,8 @@ namespace Jomo.WFC
         //Run the wave function collapse and store the result in the original connection graph
         public bool Solve()
         {
+            if (m_Unsolvable) return false;
+
             while (!IsCollapsed())
             {
                 bool iterationSuccess = Iterate();

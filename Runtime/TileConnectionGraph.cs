@@ -13,6 +13,10 @@ namespace Jomo.WFC
         public Node m_xNeg;
         public Node m_zPos;
         public Node m_zNeg;
+
+        // Sockets required on sides without a neighbour, indexed by NeighbourDirection. null leaves a side free.
+        // Used to make a mesh's border match whatever lies beyond it.
+        public string[] m_BoundarySockets = new string[4];
         
         //used once the result is done
         public Prototype m_Prototype;
@@ -123,8 +127,17 @@ namespace Jomo.WFC
         }
     
         
-        // Fully qualified, since inside Jomo.WFC the name HalfEdgeMesh means the namespace Jomo.HalfEdgeMesh
-        public static TileConnectionGraph FromMesh(Jomo.HalfEdgeMesh.HalfEdgeMesh mesh)
+        // The direction each of a face's four half-edges faces, in order from face.Edge. Faces are wound clockwise, like
+        // the sides of a tile read clockwise, so a socket string runs from the start of its half-edge to the end.
+        public static readonly NeighbourDirection[] EdgeDirections =
+        {
+            NeighbourDirection.POSITIVE_X, NeighbourDirection.NEGATIVE_Z, NeighbourDirection.NEGATIVE_X, NeighbourDirection.POSITIVE_Z,
+        };
+
+        // Fully qualified, since inside Jomo.WFC the name HalfEdgeMesh means the namespace Jomo.HalfEdgeMesh.
+        // boundarySocket, if given, is asked for the socket each face's side on the mesh boundary must have, by the
+        // face's half-edge on that side. Returning null leaves the side free.
+        public static TileConnectionGraph FromMesh(Jomo.HalfEdgeMesh.HalfEdgeMesh mesh, Func<Jomo.HalfEdgeMesh.HalfEdge, string> boundarySocket = null)
         {
 
             Dictionary<int, Node> nodes = new Dictionary<int, Node>();
@@ -161,44 +174,27 @@ namespace Jomo.WFC
                 var node = nodes[faceIds[face]] as MeshNode;
 
                 var edge = face.Edge;
-                var neighbour = edge.Twin.IncidentFace;
-
-                if (neighbour != null)
+                foreach (NeighbourDirection direction in EdgeDirections)
                 {
-                    node.m_xPos = nodes[faceIds[neighbour]];
+                    var neighbour = edge.Twin.IncidentFace;
+                    if (neighbour != null)
+                    {
+                        Node other = nodes[faceIds[neighbour]];
+                        switch (direction)
+                        {
+                            case NeighbourDirection.POSITIVE_X: node.m_xPos = other; break;
+                            case NeighbourDirection.NEGATIVE_Z: node.m_zNeg = other; break;
+                            case NeighbourDirection.NEGATIVE_X: node.m_xNeg = other; break;
+                            case NeighbourDirection.POSITIVE_Z: node.m_zPos = other; break;
+                        }
+                    }
+                    else if (boundarySocket != null)
+                    {
+                        node.m_BoundarySockets[(int)direction] = boundarySocket(edge);
+                    }
 
+                    edge = edge.Next;
                 }
-
-                edge = edge.Next;
-                neighbour = edge.Twin.IncidentFace;
-
-                if (neighbour != null)
-                {
-                    node.m_zNeg = nodes[faceIds[neighbour]];
-                }
-
-                //node.p2 = edge.Next.Origin.Position;
-                //node.p3 = edge.Origin.Position;
-
-                edge = edge.Next;
-                neighbour = edge.Twin.IncidentFace;
-
-                if (neighbour != null)
-                {
-                    node.m_xNeg = nodes[faceIds[neighbour]];
-                }
-
-                edge = edge.Next;
-                neighbour = edge.Twin.IncidentFace;
-
-                if (neighbour != null)
-                {
-                    node.m_zPos = nodes[faceIds[neighbour]];
-                }
-                //node.p0 = edge.Origin.Position;
-                //node.p1 = edge.Next.Origin.Position;
-
-
             }
 
             TileConnectionGraph graph = new TileConnectionGraph();
