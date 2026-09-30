@@ -729,8 +729,6 @@ namespace Jomo.WFC
                 bool iterationSuccess = Iterate();
                 if(!iterationSuccess) return false;
             }
-        
-            Debug.Log("Solved with " + loopCount + " iterations");
 
             return true;
         }
