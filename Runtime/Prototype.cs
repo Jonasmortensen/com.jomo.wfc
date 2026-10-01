@@ -146,7 +146,8 @@ namespace Jomo.WFC
         }
     
 
-        //Adds three additional rotations of each prototype
+        //Adds three additional rotations of each prototype. The solver needs every id to equal its index, so this
+        //renumbers the given prototypes to their index and numbers the rotated copies after them.
         public static Prototype[] AddRotations(Prototype[] prototypes)
         {
             Prototype[] newPrototypes = new Prototype[prototypes.Length * 4];
@@ -155,6 +156,7 @@ namespace Jomo.WFC
 
             for (int i = 0; i < prototypes.Length; i++)
             {
+                prototypes[i].id = i;
                 newPrototypes[i] = prototypes[i];
             
                 Prototype p = MakeCopy(prototypes[i]);
@@ -168,7 +170,6 @@ namespace Jomo.WFC
                     id++;
                 }
             }
-            Debug.Log("Final ID: " + id);
             return newPrototypes;
         }
     

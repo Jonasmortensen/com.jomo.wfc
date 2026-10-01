@@ -713,8 +713,12 @@ namespace Jomo.WFC
 
         public bool Iterate()
         {
-            var superPosition = GetMinEntropyPosition();
+            return CollapseAndPropagate(GetMinEntropyPosition());
+        }
 
+        // Collapses the superposition, with the custom collapse if set, then propagates. Returns false on a contradiction.
+        public bool CollapseAndPropagate(SuperPosition superPosition)
+        {
             Collapse(superPosition);
             return Propegate(superPosition);
         }
