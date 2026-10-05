@@ -95,6 +95,17 @@ namespace Jomo.WFC
             return tags.Contains(tag);
         }
 
+        //Every character used in any of the prototype's four sockets, each once
+        public HashSet<char> GetSocketCharacterSet()
+        {
+            var characters = new HashSet<char>();
+            foreach (string socket in new[] { sockets.posX, sockets.negZ, sockets.negX, sockets.posZ })
+            {
+                if (socket != null) characters.UnionWith(socket);
+            }
+            return characters;
+        }
+
 
         public static Prototype MakeCopy(Prototype original)
         {
