@@ -12,8 +12,6 @@ namespace Jomo.WFC
 {
     public class WFCSolver
     {
-        public int loopCount = 0;
-    
         public class SuperPosition
         {
             //The possible prototypes
@@ -93,12 +91,20 @@ namespace Jomo.WFC
         static readonly ProfilerMarker s_GetNeighboursPerfMarker = new ProfilerMarker("WFCSolver.GetPossibleNeighbours");
 
 
-        //memory optimization
-        private List<int> m_NeighboursUnionCache = new List<int>(100);
+        // For a socket and the direction a neighbour faces back with, the ids of every prototype whose socket in that
+        // direction, reversed, equals it: the prototypes that fit next to a side with that socket. Built once per solver.
+        private Dictionary<(string, NeighbourDirection), int[]> m_NeighbourLookup;
 
+        // Which prototype ids fit towards the neighbour last looked at (see MarkPossibleNeighbours), the ids set in it,
+        // and the sockets already looked up. Reused, so propagating doesn't allocate.
+        private bool[] m_Allowed;
+        private readonly List<int> m_AllowedIds = new List<int>();
+        private readonly HashSet<string> m_SeenSockets = new HashSet<string>();
 
-        //Lookup table for getting prototypes that fits with given socket in given direction
-        private Dictionary<(string, NeighbourDirection), Prototype[]> m_NeighbourLookup;
+        // Positions that may still be uncollapsed, in m_SuperPositions order, so finding the next one to collapse
+        // only looks at those. Null when it has to be rebuilt.
+        private List<SuperPosition> m_Open;
+        private readonly List<SuperPosition> m_MinEntropyCandidates = new List<SuperPosition>();
 
         // Why propagation last failed, or null if it hasn't: the position that ran out of prototypes, and the sockets a
         // tile there would need on each side to fit what its neighbours can still be. Adding a prototype with those
@@ -178,9 +184,10 @@ namespace Jomo.WFC
         /// </summary>
         public void Forbid(List<SuperPosition> superPositions, List<int> prototypes)
         {
+            var forbidden = new HashSet<int>(prototypes);
             foreach (var superPosition in superPositions)
             {
-                if (superPosition.m_PrototypeIndices.Count(p => prototypes.Contains(p)) ==
+                if (superPosition.m_PrototypeIndices.Count(p => forbidden.Contains(p)) ==
                     superPosition.m_PrototypeIndices.Count)
                 {
                     Debug.LogWarning("Skipped forbidding because it would leave super position empty");
@@ -188,7 +195,7 @@ namespace Jomo.WFC
                 }
             
             
-                superPosition.m_PrototypeIndices.RemoveAll(p => prototypes.Contains(p));
+                superPosition.m_PrototypeIndices.RemoveAll(p => forbidden.Contains(p));
             }
         }
     
@@ -205,6 +212,7 @@ namespace Jomo.WFC
             SuperPosition[] superPositions = new SuperPosition[m_ConnectionGraph.nodes.Count];
 
             m_Prototypes = prototypes;
+            BuildNeighbourLookup();
 
             //Create all superpositions
             for (int i = 0; i < m_ConnectionGraph.nodes.Count; i++)
@@ -288,44 +296,42 @@ namespace Jomo.WFC
             throw new Exception("Invalid neighbour direction");
         }
 
-//Checks if every single superposition is collapsed
-        //This could probably be done in constant time if I keep track of the amount of fully collapsed tiles
-        private bool IsCollapsed()
+        // The position to collapse next: one of those with the fewest prototypes left, picked at random. Null when every
+        // position is collapsed. Scans the open positions in m_SuperPositions order, dropping the collapsed ones as it
+        // goes, so the candidates and the random pick are the same as scanning every position.
+        private SuperPosition FindMinEntropyPosition()
         {
-            foreach (var superPos in m_SuperPositions)
+            if (m_Open == null) m_Open = new List<SuperPosition>(m_SuperPositions);
+
+            int minEntropy = int.MaxValue;
+            m_MinEntropyCandidates.Clear();
+
+            int write = 0;
+            for (int read = 0; read < m_Open.Count; read++)
             {
-                if (superPos.m_PrototypeIndices.Count != 1) return false;
-            }
-
-            return true;
-        }
-
-
-        private SuperPosition GetMinEntropyPosition()
-        {
-            int minEntropy = 1000;
-            List<SuperPosition> candidates = new List<SuperPosition>();
-
-            foreach (var superPos in m_SuperPositions)
-            {
+                SuperPosition superPos = m_Open[read];
                 int entropy = superPos.m_PrototypeIndices.Count;
                 if (entropy == 1) continue;
+
+                m_Open[write++] = superPos;
 
                 if (entropy < minEntropy)
                 {
                     minEntropy = entropy;
-                    candidates = new List<SuperPosition>();
+                    m_MinEntropyCandidates.Clear();
                 }
 
-                if (entropy == minEntropy)
-                {
-                    candidates.Add(superPos);
-                }
+                if (entropy == minEntropy) m_MinEntropyCandidates.Add(superPos);
             }
-        
-            if(candidates.Count == 0) throw new Exception("Already collapsed");
+            m_Open.RemoveRange(write, m_Open.Count - write);
 
-            return candidates[RandomSource.Next(candidates.Count)];
+            if (m_MinEntropyCandidates.Count == 0) return null;
+            return m_MinEntropyCandidates[RandomSource.Next(m_MinEntropyCandidates.Count)];
+        }
+
+        private SuperPosition GetMinEntropyPosition()
+        {
+            return FindMinEntropyPosition() ?? throw new Exception("Already collapsed");
         }
 
         // The direction in which from sees to. On a mesh graph this isn't simply the opposite of to's direction to from.
@@ -376,7 +382,30 @@ namespace Jomo.WFC
             return text.ToString();
         }
 
-        private List<int> GetPossibleNeighbours(SuperPosition superPosition, NeighbourDirection direction)
+        // Fills m_NeighbourLookup from the prototypes
+        private void BuildNeighbourLookup()
+        {
+            var lookup = new Dictionary<(string, NeighbourDirection), List<int>>();
+            int maxId = m_Prototypes.Length - 1;
+            foreach (Prototype prototype in m_Prototypes)
+            {
+                maxId = Math.Max(maxId, prototype.id);
+                foreach (NeighbourDirection direction in Enum.GetValues(typeof(NeighbourDirection)))
+                {
+                    var key = (prototype.sockets.GetSocketInDirection(direction, true), direction);
+                    if (!lookup.TryGetValue(key, out List<int> ids)) lookup[key] = ids = new List<int>();
+                    ids.Add(prototype.id);
+                }
+            }
+
+            m_NeighbourLookup = lookup.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray());
+            m_Allowed = new bool[maxId + 1];
+        }
+
+        // Sets m_Allowed for every prototype that fits next to some prototype of the position, on the neighbour in
+        // direction: its socket facing back, reversed, equals that prototype's socket towards it. Clear it again with
+        // ClearPossibleNeighbours.
+        private void MarkPossibleNeighbours(SuperPosition superPosition, NeighbourDirection direction)
         {
             using (s_GetNeighboursPerfMarker.Auto())
             {
@@ -384,50 +413,30 @@ namespace Jomo.WFC
                 SuperPosition neighbour = superPosition.GetNeighbour(direction);
                 NeighbourDirection otherDirection = DirectionTowards(neighbour, superPosition);
 
-                //List<int> neightborsUnion = new List<int>(32);
-            
-                m_NeighboursUnionCache.Clear();
-
-                //Foreach prototype
+                m_SeenSockets.Clear();
                 for (int i = 0; i < superPosition.m_PrototypeIndices.Count; i++)
                 {
-                    Prototype prototype = m_Prototypes[superPosition.m_PrototypeIndices[i]];
+                    string socket = m_Prototypes[superPosition.m_PrototypeIndices[i]].sockets.GetSocketInDirection(direction);
+                    if (!m_SeenSockets.Add(socket)) continue;
+                    if (!m_NeighbourLookup.TryGetValue((socket, otherDirection), out int[] fits)) continue;
 
-                    string socket = prototype.sockets.GetSocketInDirection(direction);
-                
-                
-                    //This takes time
-                    //TODO: I could find this list in constant time if prototypes had a lookup table: (socket, direction) -> List<Prototype>
-                    //Get all prototypes where socket in direction equals reverse socket in other direction
-                
-                
-                    //Profiler.BeginSample("Looping prototypes");
-                
-                
-                
-                    for(int j = 0; j < m_Prototypes.Length; j++)
+                    foreach (int id in fits)
                     {
-                        loopCount++;
-                    
-                        var otherPrototype = m_Prototypes[j];
-                    
-                        string reverseOtherSocket = otherPrototype.sockets.GetSocketInDirection(otherDirection, true);
-                        bool fits = reverseOtherSocket == socket;
-                    
-                        if (fits)
-                        {
-                            m_NeighboursUnionCache.Add(otherPrototype.id);
-                        
-                        }
+                        if (m_Allowed[id]) continue;
+                        m_Allowed[id] = true;
+                        m_AllowedIds.Add(id);
                     }
-                
-                    //Profiler.EndSample();
                 }
-                return m_NeighboursUnionCache;
             }
-
-        
         }
+
+        private void ClearPossibleNeighbours()
+        {
+            foreach (int id in m_AllowedIds) m_Allowed[id] = false;
+            m_AllowedIds.Clear();
+        }
+
+        private bool IsAllowed(int id) => id >= 0 && id < m_Allowed.Length && m_Allowed[id];
 
         private void Collapse(SuperPosition superPosition)
         {
@@ -445,6 +454,7 @@ namespace Jomo.WFC
         {
             //Reset supoer position
             superPosition.m_PrototypeIndices = m_Prototypes.Select(p => p.id).ToList();
+            m_Open = null;
         }
 
         public void UpdatePosition(SuperPosition superPosition, int prototype)
@@ -452,6 +462,7 @@ namespace Jomo.WFC
             superPosition.m_PrototypeIndices = new List<int> {prototype};
 
             RecalculateNeighbourPrototypes(superPosition);
+            m_Open = null;
         }
 
         public Prototype TryGetPrototype(SuperPosition superPosition)
@@ -516,16 +527,18 @@ namespace Jomo.WFC
         
         
             //Try updating in one direction
-            List<int> validNeighbourPrototypes = GetPossibleNeighbours(superPosition, direction);
+            MarkPossibleNeighbours(superPosition, direction);
+            List<int> validNeighbourPrototypes = m_AllowedIds.OrderBy(id => id).ToList();
             List<int> intersection = new List<int>();
 
             foreach (var p in neighbour.m_PrototypeIndices)
             {
-                if (validNeighbourPrototypes.Contains(p))
+                if (IsAllowed(p))
                 {
                     intersection.Add(p);
                 }
             }
+            ClearPossibleNeighbours();
 
             if (intersection.Count > 0)
             {
@@ -627,50 +640,43 @@ namespace Jomo.WFC
             //If no neighbour. Nothing to validate
             if (neighbour == null) return (true, null);
 
-            //Get possible prototypes in direction
-            List<int> possiblePrototypes = GetPossibleNeighbours(superPosition, neighbourDirection);
-        
-            if (neighbour.m_PrototypeIndices.Count == 1)
+            //Mark the possible prototypes in direction
+            MarkPossibleNeighbours(superPosition, neighbourDirection);
+            try
             {
-                if(possiblePrototypes.Contains(neighbour.m_PrototypeIndices[0])) return (true, null); //Neighbour already collapsed to a valid prototype, leave it
-            }
-        
-            //Find out what to ban
-            List<int> toBan = new List<int>();
-        
-            //Check if each prototype in neighbour super position is still valid
-            foreach (var id in neighbour.m_PrototypeIndices)
-            {
-                //If it is no longer a valid neightbour, mark it for constraint
-                //O(n)
-                if (!possiblePrototypes.Contains(id))
+                List<int> prototypes = neighbour.m_PrototypeIndices;
+
+                int kept = 0;
+                foreach (int id in prototypes)
                 {
-                    toBan.Add(id);
+                    if (IsAllowed(id)) kept++;
                 }
-            }
 
-            bool neighbourConstrained = toBan.Count > 0;
-        
+                //Every prototype still fits: nothing changes
+                if (kept == prototypes.Count) return (true, null);
 
-            //Remove the prototypes from the neighbour superposition
-            foreach (var id in toBan)
-            {
-                if (neighbour.m_PrototypeIndices.Count <= 1)
+                //Nothing fits any more: a contradiction
+                if (kept == 0)
                 {
                     Debug.Log("Banning in a collapsedPosition");
                     LastContradiction = DescribeContradiction(neighbour);
-                    return (false, null); //Can't ban a collapsed position
+                    return (false, null);
                 }
-                neighbour.m_PrototypeIndices.Remove(id);
-            }
-        
 
-            if (neighbourConstrained)
-            {
+                //Remove the prototypes that no longer fit, keeping the order of the rest
+                int write = 0;
+                for (int read = 0; read < prototypes.Count; read++)
+                {
+                    if (IsAllowed(prototypes[read])) prototypes[write++] = prototypes[read];
+                }
+                prototypes.RemoveRange(write, prototypes.Count - write);
+
                 return (true, neighbour);
             }
-        
-            return (true, null);
+            finally
+            {
+                ClearPossibleNeighbours();
+            }
         }
 
         //Update all neighbour lists starting with the root super position
@@ -728,10 +734,9 @@ namespace Jomo.WFC
         {
             if (m_Unsolvable) return false;
 
-            while (!IsCollapsed())
+            for (SuperPosition next = FindMinEntropyPosition(); next != null; next = FindMinEntropyPosition())
             {
-                bool iterationSuccess = Iterate();
-                if(!iterationSuccess) return false;
+                if (!CollapseAndPropagate(next)) return false;
             }
 
             return true;
