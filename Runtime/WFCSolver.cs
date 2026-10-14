@@ -83,7 +83,16 @@ namespace Jomo.WFC
             }
         }
 
+        // In the order of the graph's nodes
         public List<SuperPosition> m_SuperPositions;
+
+        private Dictionary<Node, SuperPosition> m_PositionOfNode;
+
+        // The superposition solving the node, or null if the node isn't in the solver's graph
+        public SuperPosition GetSuperPosition(Node node)
+        {
+            return m_PositionOfNode.TryGetValue(node, out SuperPosition position) ? position : null;
+        }
 
         private int m_Width, m_Height;
         private Prototype[] m_Prototypes;
@@ -131,6 +140,9 @@ namespace Jomo.WFC
         // sockets (in any rotation, if rotations are generated) would have avoided the contradiction.
         public string LastContradiction { get; private set; }
 
+        // The position LastContradiction is about, or null if propagation hasn't failed
+        public SuperPosition LastContradictionPosition { get; private set; }
+
         // Set when the border sockets already rule out every prototype somewhere, so Solve fails straight away
         private bool m_Unsolvable;
 
@@ -170,6 +182,7 @@ namespace Jomo.WFC
                 Debug.Log("No valid prototypes found");
                 LastContradiction = "None of the requested prototypes are still possible at node " +
                                     (pos.m_Node != null ? pos.m_Node.m_ID.ToString() : "?") + ".\n" + DescribeContradiction(pos);
+                LastContradictionPosition = pos;
                 return false;
             }
 
@@ -262,22 +275,22 @@ namespace Jomo.WFC
             RandomSource = seed.HasValue ? new System.Random(seed.Value) : new System.Random();
             m_ConnectionGraph = connectionGraph;
 
-            SuperPosition[] superPositions = new SuperPosition[m_ConnectionGraph.nodes.Count];
-
             m_Prototypes = prototypes;
             BuildNeighbourLookup();
 
-            //Create all superpositions
+            //Create all superpositions, in the order of the graph's nodes. Node ids aren't used, so a graph can be part of
+            //a bigger one (see TileConnectionGraph.Partition), as long as no node links to one outside it.
+            m_SuperPositions = new List<SuperPosition>(m_ConnectionGraph.nodes.Count);
+            m_PositionOfNode = new Dictionary<Node, SuperPosition>(m_ConnectionGraph.nodes.Count);
             for (int i = 0; i < m_ConnectionGraph.nodes.Count; i++)
             {
                 SuperPosition superPosition = new SuperPosition();
                 superPosition.m_PrototypeIndices = Enumerable.Range(0, prototypes.Length).ToList();
                 superPosition.m_Node = m_ConnectionGraph.nodes[i];
-                superPosition.m_Index = m_ConnectionGraph.nodes[i].m_ID;
-                superPositions[superPosition.m_Index] = superPosition;
+                superPosition.m_Index = i;
+                m_SuperPositions.Add(superPosition);
+                m_PositionOfNode[superPosition.m_Node] = superPosition;
             }
-
-            m_SuperPositions = superPositions.ToList();
 
             bool constrainOuterEdge = !string.IsNullOrEmpty(defaultSocket);
             m_DefaultSocket = constrainOuterEdge ? defaultSocket : null;
@@ -297,7 +310,9 @@ namespace Jomo.WFC
                     Node neighbourNode = NeighbourNode(node, direction);
                     if (neighbourNode != null)
                     {
-                        superPosition.SetNeighbour(direction, m_SuperPositions[neighbourNode.m_ID]);
+                        if (!m_PositionOfNode.TryGetValue(neighbourNode, out SuperPosition neighbour))
+                            throw new Exception($"Node {node.m_ID} links to node {neighbourNode.m_ID}, which isn't in the graph");
+                        superPosition.SetNeighbour(direction, neighbour);
                         continue;
                     }
 
@@ -327,6 +342,7 @@ namespace Jomo.WFC
             {
                 m_Unsolvable = true;
                 LastContradiction = DescribeContradiction(empty);
+                LastContradictionPosition = empty;
                 return;
             }
 
@@ -831,6 +847,7 @@ namespace Jomo.WFC
                 {
                     Debug.Log("Banning in a collapsedPosition");
                     LastContradiction = DescribeContradiction(neighbour);
+                    LastContradictionPosition = neighbour;
                     return false;
                 }
 

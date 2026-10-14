@@ -202,7 +202,53 @@ namespace Jomo.WFC
 
             return graph;
         }
-        
+
+        // Splits the graph into its connected parts: nodes linked as neighbours, directly or through other nodes, in
+        // either direction. Parts don't affect each other, so they can be solved apart, at the same time. The parts
+        // share this graph's nodes, which keep their ids. Nodes keep their order within a part, and parts are in the
+        // order of their first node, so a graph with one part gives a graph with the same nodes in the same order.
+        public List<TileConnectionGraph> Partition()
+        {
+            var index = new Dictionary<Node, int>(nodes.Count);
+            for (int i = 0; i < nodes.Count; i++) index[nodes[i]] = i;
+
+            // Union-find over node indices
+            int[] parent = new int[nodes.Count];
+            for (int i = 0; i < parent.Length; i++) parent[i] = i;
+            int Find(int i)
+            {
+                while (parent[i] != i) i = parent[i] = parent[parent[i]];
+                return i;
+            }
+
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                Node node = nodes[i];
+                foreach (Node neighbour in new[] { node.m_xPos, node.m_xNeg, node.m_zPos, node.m_zNeg })
+                {
+                    if (neighbour == null || !index.TryGetValue(neighbour, out int j)) continue;
+                    int a = Find(i), b = Find(j);
+                    if (a != b) parent[Math.Max(a, b)] = Math.Min(a, b);
+                }
+            }
+
+            var parts = new List<TileConnectionGraph>();
+            var partOfRoot = new Dictionary<int, TileConnectionGraph>();
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                int root = Find(i);
+                if (!partOfRoot.TryGetValue(root, out TileConnectionGraph part))
+                {
+                    part = new TileConnectionGraph();
+                    partOfRoot[root] = part;
+                    parts.Add(part);
+                }
+                part.nodes.Add(nodes[i]);
+            }
+
+            return parts;
+        }
+
     
     
     }
